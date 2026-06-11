@@ -7,12 +7,14 @@ import { headers } from 'next/headers';
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "").split(",").map(s => s.trim()).filter(Boolean);
 
-async function requireAdmin(): Promise<NextResponse | null> {
+async function requireAuth() {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-  }
-  if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(session.user.email)) {
+  if (!session?.user) return null;
+  return session.user;
+}
+
+async function requireAdmin(user: any): Promise<NextResponse | null> {
+  if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(user.email)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return null;
@@ -104,8 +106,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authError = await requireAdmin();
-  if (authError) return authError;
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
   try {
     const body = await request.json();
@@ -151,6 +153,36 @@ export async function POST(request: NextRequest) {
         error: "Valid positive price is required",
         code: "INVALID_PRICE" 
       }, { status: 400 });
+    }
+
+    // Paywall and QC Enforcement
+    if (brandId) {
+       const brandList = await db.select().from(brands).where(eq(brands.id, brandId));
+       if (brandList.length > 0) {
+          const brand = brandList[0];
+          
+          // Verify ownership or admin
+          const isAdmin = ADMIN_EMAILS.includes(user.email);
+          if (brand.ownerId !== user.id && !isAdmin) {
+             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+          }
+
+          // Block pending/suspended
+          if (brand.status === 'pending') {
+             return NextResponse.json({ error: 'Your brand is pending approval.' }, { status: 403 });
+          }
+          if (brand.status === 'suspended') {
+             return NextResponse.json({ error: 'Your brand is suspended.' }, { status: 403 });
+          }
+
+          // Basic tier limit check
+          if (brand.subscriptionTier === 'basic' || !brand.subscriptionTier) {
+             const existingProducts = await db.select().from(products).where(eq(products.brandId, brandId));
+             if (existingProducts.length >= 50) {
+                return NextResponse.json({ error: 'Basic tier limit reached. Please upgrade to Pro to add more products.' }, { status: 403 });
+             }
+          }
+       }
     }
 
     // Generate slug from name if not provided
@@ -201,7 +233,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const authError = await requireAdmin();
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  const authError = await requireAdmin(user);
   if (authError) return authError;
 
   try {
@@ -300,7 +334,9 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const authError = await requireAdmin();
+  const user = await requireAuth();
+  if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  const authError = await requireAdmin(user);
   if (authError) return authError;
 
   try {

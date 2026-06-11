@@ -7,8 +7,8 @@ export function middleware(request: NextRequest) {
   const hasSession = request.cookies.has("better-auth.session_token");
   console.log("[Middleware] Has session cookie:", hasSession);
   
-  // Redirect to login if no session cookie found
-  if (!hasSession) {
+  // Redirect to login if no session cookie found (only in production)
+  if (!hasSession && process.env.NODE_ENV !== "development") {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
     console.log("[Middleware] Redirecting to:", loginUrl.toString());
@@ -19,5 +19,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/account", "/account/:path*", "/admin", "/admin/:path*"],
+  matcher: ["/account", "/account/:path*", "/admin", "/admin/:path*", "/partner-dashboard", "/partner-dashboard/:path*"],
 };

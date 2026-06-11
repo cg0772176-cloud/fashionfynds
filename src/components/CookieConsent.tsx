@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 
@@ -11,8 +12,12 @@ type ConsentState = {
 };
 
 export default function CookieConsent() {
+  const pathname = usePathname();
   const [consent, setConsent] = useState<ConsentState | null>(null);
   const [showBanner, setShowBanner] = useState(false);
+
+  // Hide the cookie banner on the pre-launch waitlist landing page
+  if (pathname === '/') return null;
 
   useEffect(() => {
     try {

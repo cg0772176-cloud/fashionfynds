@@ -11,12 +11,16 @@ export const user = sqliteTable("user", {
     .$defaultFn(() => false)
     .notNull(),
   image: text("image"),
+  role: text("role").notNull().default("user"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .$defaultFn(() => new Date())
     .notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .$defaultFn(() => new Date())
     .notNull(),
+  banned: integer("banned", { mode: "boolean" }).default(false),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp" }),
 });
 
 export const session = sqliteTable("session", {
@@ -79,10 +83,15 @@ export const categories = sqliteTable('categories', {
 
 export const brands = sqliteTable('brands', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => user.id),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   description: text('description'),
   logo: text('logo'),
+  subscriptionTier: text('subscription_tier').default('basic'),
+  subscriptionExpiresAt: text('subscription_expires_at'),
+  commissionRate: real('commission_rate').default(15.0),
+  status: text('status').default('pending'),
   createdAt: text('created_at').notNull(),
 });
 
@@ -147,7 +156,18 @@ export const orders = sqliteTable('orders', {
   shippingZip: text('shipping_zip').notNull(),
   shippingCountry: text('shipping_country').notNull(),
   paymentMethod: text('payment_method').notNull(),
-  paymentScreenshot: text('payment_screenshot'), // base64 or URL of UPI screenshot
+  paymentScreenshot: text('payment_screenshot'),
+  razorpayOrderId: text('razorpay_order_id'),
+  razorpayPaymentId: text('razorpay_payment_id'),
+  razorpaySignature: text('razorpay_signature'),
+  // Shiprocket logistics fields
+  shiprocketOrderId: text('shiprocket_order_id'),
+  shiprocketShipmentId: text('shiprocket_shipment_id'),
+  awbCode: text('awb_code'),
+  courierName: text('courier_name'),
+  trackingUrl: text('tracking_url'),
+  shippingLabelUrl: text('shipping_label_url'),
+  estimatedDelivery: text('estimated_delivery'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
@@ -220,4 +240,37 @@ export const newsletterSubscribers = sqliteTable('newsletter_subscribers', {
   source: text('source').default('footer'), // footer | popup | etc.
   active: integer('active', { mode: 'boolean' }).default(true),
   createdAt: text('created_at').notNull(),
+});
+
+// Brand stories table
+export const brandStories = sqliteTable('brand_stories', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  brandId: integer('brand_id').notNull().references(() => brands.id, { onDelete: 'cascade' }),
+  mediaUrl: text('media_url').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
+export const marketingPayments = sqliteTable('marketing_payments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  brandId: integer('brand_id').notNull().references(() => brands.id, { onDelete: 'cascade' }),
+  amount: real('amount').notNull(),
+  status: text('status').notNull().default('pending'), // pending | completed | failed
+  razorpayOrderId: text('razorpay_order_id'),
+  razorpayPaymentId: text('razorpay_payment_id'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const payouts = sqliteTable('payouts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  brandId: integer('brand_id').notNull().references(() => brands.id, { onDelete: 'cascade' }),
+  orderId: integer('order_id').notNull().references(() => orders.id),
+  amountDue: real('amount_due').notNull(),
+  commissionTaken: real('commission_taken').notNull(),
+  status: text('status').notNull().default('held'), // 'held' | 'ready_for_payout' | 'paid'
+  payoutDate: text('payout_date').notNull(), // T+7 days from order delivery
+  settledAt: text('settled_at'), // When the admin actually paid the brand
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 });

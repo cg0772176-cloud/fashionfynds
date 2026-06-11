@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 import { useState } from "react";
 import Header from "@/components/Header";
+import BrandStories from "@/components/BrandStories";
 import TrendingTicker from "@/components/TrendingTicker";
 import TrendingNowBanner from "@/components/TrendingNowBanner";
 import UrgencyBanner from "@/components/UrgencyBanner";
@@ -59,6 +60,7 @@ export default function Home() {
       />
       
       <main id="main-content" tabIndex={-1} className="outline-none">
+        <BrandStories />
         <UrgencyBanner />
         <TrendingTicker />
         <TrendingNowBanner />

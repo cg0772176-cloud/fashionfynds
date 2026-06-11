@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Loader2, Smartphone, Copy, CheckCircle2, AlertCircle, Upload, ImageIcon, X,
+  Loader2, CheckCircle2, AlertCircle, ShieldCheck
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -20,15 +20,13 @@ interface CheckoutModalProps {
 }
 
 const EMAIL_REGEX = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
-const UPI_ID = process.env.NEXT_PUBLIC_UPI_ID ?? "fashionfynds@upi";
 
-type Step = "details" | "payment" | "done";
+type Step = "details" | "processing" | "done";
 
 export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
   const { cart, cartTotal, cartCount, clearCart } = useShop();
   const [step, setStep] = useState<Step>("details");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [upiCopied, setUpiCopied] = useState(false);
 
   // Contact / shipping
   const [name, setName] = useState("");
@@ -40,11 +38,6 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
   const [zip, setZip] = useState("");
   const [country, setCountry] = useState("India");
 
-  // Screenshot
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
-  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
-
   // Coupon
   const [couponInput, setCouponInput] = useState("");
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
@@ -54,6 +47,17 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
     FYNDS20: { type: "percent", value: 20, label: "20% off" },
     FYNDS10: { type: "percent", value: 10, label: "10% off" },
   };
+
+  useEffect(() => {
+    // Dynamically load Razorpay script
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
 
   const applyCoupon = () => {
     const code = couponInput.trim().toUpperCase();
@@ -77,30 +81,7 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
   const shippingCost = cartTotal > 999 ? 0 : 99;
   const total = cartTotal - couponDiscount + shippingCost;
 
-  const copyUpi = () => {
-    navigator.clipboard.writeText(UPI_ID);
-    setUpiCopied(true);
-    setTimeout(() => setUpiCopied(false), 2000);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please upload an image file.");
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be under 5 MB.");
-      return;
-    }
-    setScreenshotFile(file);
-    const reader = new FileReader();
-    reader.onloadend = () => setScreenshotPreview(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handleContinueToPayment = () => {
+  const handleContinueToPayment = async () => {
     const sanitizedEmail = DOMPurify.sanitize(email.trim()).toLowerCase();
     if (!name.trim()) { toast.error("Please enter your full name."); return; }
     if (!sanitizedEmail || !EMAIL_REGEX.test(sanitizedEmail)) { toast.error("Please enter a valid email."); return; }
@@ -110,20 +91,12 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
     if (!stateName.trim()) { toast.error("Please enter your state."); return; }
     if (!zip.trim()) { toast.error("Please enter your PIN code."); return; }
     if (cart.length === 0) { toast.error("Your cart is empty."); return; }
-    setStep("payment");
-  };
-
-  const handleSubmitOrder = async () => {
-    if (!screenshotFile) {
-      toast.error("Please upload your payment screenshot.");
-      return;
-    }
 
     setIsSubmitting(true);
-    const sanitizedEmail = DOMPurify.sanitize(email.trim()).toLowerCase();
+    setStep("processing");
 
     try {
-      // 1. Place the order
+      // 1. Create order in our DB
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -151,28 +124,86 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
           shippingState: stateName.trim(),
           shippingZip: zip.trim(),
           shippingCountry: country.trim(),
-          paymentMethod: "upi_manual",
-          status: "pending_verification",
+          paymentMethod: "razorpay",
+          status: "pending_payment",
         }),
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Failed to place order");
+        throw new Error("Failed to place order in database");
       }
-
       const order = await res.json();
 
-      // 2. Upload screenshot against the order
-      const formData = new FormData();
-      formData.append("screenshot", screenshotFile);
-      formData.append("orderId", String(order.id));
-      await fetch("/api/orders/screenshot", { method: "POST", body: formData });
+      // 2. Initialize Razorpay order
+      const rzpRes = await fetch("/api/checkout/razorpay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: total,
+          receipt: order.orderNumber,
+        }),
+      });
 
-      clearCart();
-      setStep("done");
+      if (!rzpRes.ok) {
+        throw new Error("Failed to initialize Razorpay checkout");
+      }
+      const rzpOrder = await rzpRes.json();
+
+      // 3. Open Razorpay Checkout
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_placeholder", 
+        amount: rzpOrder.amount,
+        currency: rzpOrder.currency,
+        name: "FashionFynds",
+        description: `Order ${order.orderNumber}`,
+        order_id: rzpOrder.id,
+        handler: async function (response: any) {
+          // 4. Verify payment
+          const verifyRes = await fetch("/api/checkout/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              order_number: order.orderNumber,
+            }),
+          });
+          
+          if (verifyRes.ok) {
+            clearCart();
+            setStep("done");
+          } else {
+            toast.error("Payment verification failed. If money was deducted, contact support.");
+            setStep("details");
+          }
+        },
+        prefill: {
+          name: name.trim(),
+          email: sanitizedEmail,
+          contact: phone.trim(),
+        },
+        theme: {
+          color: "#0f172a",
+        },
+        modal: {
+          ondismiss: function() {
+            setStep("details");
+            setIsSubmitting(false);
+            toast.info("Payment cancelled.");
+          }
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on("payment.failed", function (response: any) {
+        toast.error("Payment failed. Please try again.");
+      });
+      rzp.open();
+
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong.");
+      setStep("details");
     } finally {
       setIsSubmitting(false);
     }
@@ -181,9 +212,6 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
   const handleClose = () => {
     if (isSubmitting) return;
     setStep("details");
-    setScreenshotFile(null);
-    setScreenshotPreview(null);
-    setUpiCopied(false);
     setCouponInput("");
     setAppliedCoupon(null);
     setCouponDiscount(0);
@@ -194,10 +222,11 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-xl">
+          <DialogTitle className="text-xl flex items-center gap-2">
             {step === "details" && "Shipping Details"}
-            {step === "payment" && "Pay via UPI"}
+            {step === "processing" && "Processing Payment"}
             {step === "done" && "Order Placed!"}
+            {(step === "details" || step === "processing") && <ShieldCheck className="w-5 h-5 text-green-500" />}
           </DialogTitle>
         </DialogHeader>
 
@@ -294,102 +323,34 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
               </div>
             </div>
 
-            <Button className="w-full" size="lg" onClick={handleContinueToPayment}>
-              Continue to Payment
+            <Button className="w-full text-lg h-12 relative overflow-hidden group" onClick={handleContinueToPayment} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <><Loader2 className="h-5 w-5 mr-2 animate-spin" />Initializing Secure Checkout…</>
+              ) : (
+                <>Pay {formatPrice(total)} Securely</>
+              )}
+              <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out" />
             </Button>
+            <div className="flex justify-center items-center gap-1.5 text-xs text-muted-foreground mt-2">
+               <ShieldCheck className="w-3.5 h-3.5" /> 100% Secure Payments by Razorpay
+            </div>
           </div>
         )}
 
-        {/* ── STEP 2: UPI payment ── */}
-        {step === "payment" && (
-          <div className="space-y-5">
-            {/* Amount banner */}
-            <div className="bg-teal-50 dark:bg-teal-950 border border-teal-200 dark:border-teal-800 rounded-xl p-4 text-center">
-              <Smartphone className="h-8 w-8 mx-auto mb-2 text-teal-600" />
-              <p className="text-sm text-teal-700 dark:text-teal-300">Amount to pay</p>
-              <p className="text-3xl font-bold text-teal-900 dark:text-teal-100 mt-1">
-                {formatPrice(total)}
-              </p>
-            </div>
-
-            {/* UPI ID */}
-            <div className="border rounded-xl p-4 space-y-3">
-              <p className="text-sm font-medium">Step 1 — Send payment to this UPI ID</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 bg-muted px-3 py-2.5 rounded-lg text-sm font-mono font-semibold tracking-wide">
-                  {UPI_ID}
-                </code>
-                <Button size="sm" variant="outline" onClick={copyUpi} className="shrink-0">
-                  {upiCopied ? (
-                    <><CheckCircle2 className="h-4 w-4 text-green-500 mr-1" /> Copied</>
-                  ) : (
-                    <><Copy className="h-4 w-4 mr-1" /> Copy</>
-                  )}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Open GPay, PhonePe, Paytm, or any UPI app → Pay to UPI ID → Enter ₹{total.toFixed(0)} → Complete payment
-              </p>
-            </div>
-
-            {/* Screenshot upload */}
-            <div className="border rounded-xl p-4 space-y-3">
-              <p className="text-sm font-medium">Step 2 — Upload your payment screenshot</p>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-
-              {screenshotPreview ? (
-                <div className="relative">
-                  <img
-                    src={screenshotPreview}
-                    alt="Payment screenshot"
-                    className="w-full max-h-48 object-contain rounded-lg border bg-muted"
-                  />
-                  <button
-                    onClick={() => { setScreenshotFile(null); setScreenshotPreview(null); }}
-                    className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                  <p className="text-xs text-green-600 dark:text-green-400 mt-2 flex items-center gap-1">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Screenshot uploaded
-                  </p>
-                </div>
-              ) : (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full border-2 border-dashed border-muted-foreground/30 hover:border-muted-foreground/60 rounded-xl py-8 flex flex-col items-center gap-2 transition-colors"
-                >
-                  <ImageIcon className="h-8 w-8 text-muted-foreground/50" />
-                  <span className="text-sm text-muted-foreground">Tap to upload screenshot</span>
-                  <span className="text-xs text-muted-foreground/60">JPG, PNG, WebP — max 5 MB</span>
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>We&apos;ll verify your payment and confirm the order on WhatsApp within 1–2 hours.</span>
-            </div>
-
-            <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setStep("details")} disabled={isSubmitting}>
-                Back
-              </Button>
-              <Button className="flex-1" onClick={handleSubmitOrder} disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Placing Order…</>
-                ) : (
-                  <><Upload className="h-4 w-4 mr-2" />Submit Order</>
-                )}
-              </Button>
-            </div>
+        {/* ── STEP 2: Processing ── */}
+        {step === "processing" && (
+          <div className="space-y-6 text-center py-10">
+             <div className="relative w-24 h-24 mx-auto">
+                <Loader2 className="w-24 h-24 animate-spin text-primary opacity-20" />
+                <ShieldCheck className="w-10 h-10 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-primary" />
+             </div>
+             <div>
+                <h3 className="text-xl font-bold">Secure Checkout</h3>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Please complete the payment in the Razorpay window.<br/>
+                  Do not refresh or close this page.
+                </p>
+             </div>
           </div>
         )}
 
@@ -398,10 +359,9 @@ export default function CheckoutModal({ open, onClose }: CheckoutModalProps) {
           <div className="space-y-5 text-center py-4">
             <CheckCircle2 className="h-16 w-16 mx-auto text-green-500" />
             <div>
-              <h3 className="text-lg font-bold">Order Received!</h3>
+              <h3 className="text-lg font-bold">Order Confirmed!</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                We have your screenshot and will verify payment within 1–2 hours.
-                You will get a WhatsApp confirmation once done.
+                Your payment was successful. We have received your order and will process it shortly.
               </p>
             </div>
             <div className="bg-muted rounded-lg p-4 text-left text-sm space-y-2">

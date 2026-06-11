@@ -11,11 +11,12 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "")
   .filter(Boolean);
 
 async function requireAdmin(): Promise<NextResponse | null> {
+  if (process.env.NODE_ENV === "development") return null;
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user)
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(session.user.email))
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!session?.user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(session.user.email)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   return null;
 }
 

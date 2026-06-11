@@ -37,7 +37,7 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: 'standalone',
   reactStrictMode: false,
-  trailingSlash: true,
+  trailingSlash: false,
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "**" },
@@ -46,6 +46,7 @@ const nextConfig: NextConfig = {
   },
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
+  serverExternalPackages: ["better-auth", "@better-auth/kysely-adapter", "kysely", "drizzle-orm"],
   async headers() {
     return [
       {

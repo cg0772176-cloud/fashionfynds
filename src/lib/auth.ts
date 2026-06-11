@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { bearer } from "better-auth/plugins";
+import { admin, bearer } from "better-auth/plugins";
 import { NextRequest } from 'next/server';
 import { headers } from "next/headers";
 import { db } from "@/db";
@@ -15,7 +15,7 @@ export const auth = betterAuth({
 	}),
 	emailAndPassword: {    
 		enabled: true,
-		requireEmailVerification: true,
+		requireEmailVerification: false,
 		sendResetPassword: async ({ user, url, token }, request) => {
 			void sendPasswordResetEmail(user.email, user.name, url);
 		},
@@ -52,7 +52,7 @@ export const auth = betterAuth({
 			},
 		} : {}),
 	},
-	plugins: [bearer()]
+	plugins: [bearer(), admin()]
 });
 
 // Session validation helper

@@ -12,33 +12,13 @@ const slugify = (text: string): string => {
     .replace(/-+/g, '-');
 };
 
+import { getCurrentUser } from '@/lib/auth';
+
 async function authenticateRequest(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return null;
-    }
-
-    const token = authHeader.substring(7);
-    const sessionResult = await db
-      .select()
-      .from(session)
-      .where(eq(session.token, token))
-      .limit(1);
-
-    if (sessionResult.length === 0) {
-      return null;
-    }
-
-    const userSession = sessionResult[0];
-    const now = new Date();
-    const expiresAt = new Date(userSession.expiresAt);
-
-    if (expiresAt <= now) {
-      return null;
-    }
-
-    return userSession;
+    const user = await getCurrentUser();
+    if (!user) return null;
+    return { userId: user.id };
   } catch (error) {
     console.error('Authentication error:', error);
     return null;
