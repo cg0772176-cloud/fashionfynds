@@ -34,7 +34,7 @@ export default function WaitlistForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || data.message || "Something went wrong");
+        throw new Error(data.details ? `${data.error}: ${data.details}` : data.error || "Failed to join waitlist");
       }
 
       setStatus("success");
