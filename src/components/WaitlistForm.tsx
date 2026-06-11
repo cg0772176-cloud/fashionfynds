@@ -24,6 +24,13 @@ export default function WaitlistForm() {
         body: JSON.stringify({ email }),
       });
 
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const textError = await res.text();
+        console.error("Non-JSON response:", textError);
+        throw new Error("Server configuration error. (Did you add your Environment Variables in Vercel and redeploy?)");
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
