@@ -35,7 +35,6 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
   reactStrictMode: false,
   trailingSlash: false,
   images: {
